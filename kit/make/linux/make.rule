@@ -1,0 +1,773 @@
+#*******************************************************************************#
+#                                                                               #
+#   Copyright (c) 2010-2020, MengFei.                                           #
+#   All Rights Reserved.                                                        #
+#                                                                               #
+#   File Name:  make.rule                                                       #
+#   Abstract :  GC Make Implementation file.                                    #
+#                                                                               #
+#   Author   :  MengFei                                                         #
+#   Version  :  1.0                                                             #
+#   Creation :  2010/08/11                                                      #
+#                                                                               #
+#   Modify:                                                                     #
+#       Date    Version         Contents                                        #
+#                                                                               #
+#*******************************************************************************#
+
+#*******************************************************************************#
+#
+#   Pre-Make command.
+#   Note:
+#       Ignore the result of the command, use echo to redirect the result
+#       of the command to '/dev/null'.
+#
+#*******************************************************************************#
+
+ifdef GCMK_PRE_COMMAND
+    $(shell echo `$(GCMK_PRE_COMMAND)` &>/dev/null)
+endif
+
+#*******************************************************************************#
+#
+#   Make config file: load make confie file if exists.
+#
+#*******************************************************************************#
+
+GCMK_CONF_FILE  = make.cfg
+GCMK_HAVE_CONF  = $(shell if [ -f $(GCMK_CONF_FILE) ]; then echo "yes"; fi;)
+
+ifeq ($(GCMK_HAVE_CONF), yes)
+    include $(GCMK_CONF_FILE)
+endif
+
+#*******************************************************************************#
+#
+#   Make home path.
+#
+#*******************************************************************************#
+
+ifndef GCMK_HOME
+    ifdef GC_HOME
+        GCMK_HOME = $(GC_HOME)
+    else
+        GCMK_HOME = $(shell pwd)
+    endif
+endif
+
+#*******************************************************************************#
+#
+#   Make tools: if user not defined, use default.
+#
+#   'ifdef <variable-name>' :
+#       True if the value of variable <variable-name> is not null;
+#       False if <variable-name> is not defined or has no value.
+#
+#*******************************************************************************#
+
+GCMK_Make       = make
+GCMK_CompilerC  = gcc
+GCMK_Compiler   = g++
+GCMK_Linker     = g++
+GCMK_LinkerA    = ar rv
+
+ifdef GCMK_MAKE
+    GCMK_Make = $(GCMK_MAKE)
+endif
+
+ifdef GCMK_COMPILER_C
+    GCMK_CompilerC = $(GCMK_COMPILER_C)
+endif
+
+ifdef GCMK_COMPILER
+    GCMK_Compiler = $(GCMK_COMPILER)
+endif
+
+ifdef GCMK_LINKER
+    GCMK_Linker = $(GCMK_LINKER)
+endif
+
+ifdef GCMK_LINKER_A
+    GCMK_LinkerA = $(GCMK_LINKER_A)
+endif
+
+#*******************************************************************************#
+#
+#   Target System and Architecture: if user not defined, use default.
+#
+#*******************************************************************************#
+
+GCMK_PlatformArchitecture   = $(shell $(GCMK_Compiler) -v 2>&1 | grep Target | awk '{ print $$2 }')
+GCMK_Architecture           = $(shell echo $(GCMK_PlatformArchitecture) | awk -F '-' '{ print $$1 }')
+GCMK_ArchDefault           := $(GCMK_Architecture)
+
+ifdef GCMK_ARCH
+    GCMK_Architecture = $(GCMK_ARCH)
+endif
+
+#
+# Architecture short name.
+#
+GCMK_Arch = $(GCMK_Architecture)
+
+ifeq ($(GCMK_ArchDefault), x86_64)
+    GCMK_ArchDefault = x64
+endif
+
+ifeq ($(GCMK_Arch), x86_64)
+    GCMK_Arch = x64
+endif
+
+#*******************************************************************************#
+#
+#   Target Type.
+#       EXEC  : Executable (ELF).
+#       LIBA  : Static library (.a).
+#       LIBSO : Shared library (.so).
+#       LIB   : Depend on the GCMK_LIB_MODE:
+#               LIB = LIBA    (if GCMK_LIB_MODE = static)
+#               LIB = LIBSO   (otherwise, default)
+#
+#*******************************************************************************#
+
+ifeq ($(GCMK_TARGET_TYPE), LIB)
+    ifeq ($(GCMK_LIB_MODE), static)
+        GCMK_TARGET_TYPE = LIBA
+    else
+        GCMK_TARGET_TYPE = LIBSO
+    endif
+endif
+
+#*******************************************************************************#
+#
+#   Target DIR: if user not defined, use default.
+#
+#*******************************************************************************#
+
+GCMK_STD_BIN_DIR    = $(GCMK_HOME)/bin
+GCMK_STD_LIB_DIR    = $(GCMK_HOME)/lib
+
+ifeq ($(GCMK_TARGET_TYPE), LIBA)
+    GCMK_TARGET_DIR_DEF = $(GCMK_STD_LIB_DIR)
+else
+    GCMK_TARGET_DIR_DEF = $(GCMK_STD_BIN_DIR)
+endif
+
+ifndef GCMK_TARGET_DIR
+    GCMK_TARGET_DIR = $(GCMK_TARGET_DIR_DEF)
+endif
+
+#*******************************************************************************#
+#
+#   Depend options:
+#       -I : Compile option, the path for search header files.
+#       -L : Link option, the path for search libraries and ld control scripts.
+#       -l : Link option, the libraries to link. Named by libXXX.a or libXXX.so,
+#            search for libXXX.so before libXXX.a (link to SO preferential).
+#
+#       -Wl,-Bstatic  : Link option, link to static libraries(A), the following
+#                       -l are static libraries.
+#       -Wl,-Bdynamic : Link option, link to dynamic libraries(SO), the following
+#                       -l are dynamic libraries.
+#
+#   Linker options:
+#       -Xlinker option
+#           Pass option as an option to the linker(ld).
+#
+#       -Wl,option
+#           Pass option as an option to the linker(ld).
+#           Use commas to split multiple options.
+#
+#       Note:
+#           Both of these two options can pass an option to the linker, in most
+#           of the time, they will have the same effect.
+#
+#   ld options:
+#       -Bstatic
+#           Link to static libraries(A), the following -l are static libraries.
+#
+#       -Bdynamic
+#           Link to dynamic libraries(SO), the following -l are dynamic libraries.
+#
+#       -( archives -)
+#       --start-group archives --end-group
+#           The archives should be a list of archive files as a group.
+#           The specified archives are searched repeatedly until no new undefined
+#           references are created.
+#           Normally, an archive is searched only once in the order that it is
+#           specified on the command line. If a symbol in that archive is needed
+#           to resolve an undefined symbol referred to by an object in an archive
+#           that appears later on the command line, the linker would not be able
+#           to resolve that reference.
+#           By grouping the archives, they all be searched repeatedly until all
+#           possible references are resolved.
+#
+#       e.g.:
+#           gcc -o X x.o -Wl,--start-group -lA -lB -Wl,--end-group
+#           gcc -o X x.o -Xlinker --start-group -lA -lB -Xlinker --end-group
+#           gcc -o X x.o -Wl,"-(" -lA -lB -Wl,"-)"
+#           gcc -o X x.o -Xlinker "-(" -lA -lB -Xlinker "-)"
+#
+#   (See : 'man gcc' and 'man ld')
+#
+#   NOTE:
+#       GCMK_DEPEND_LIBA :
+#           The GCMK_DEPEND_LIBA specifies the static libraries to link.
+#
+#       GCMK_DEPEND_LIB :
+#           If defined GCMK_DEPEND_LIBA, the GCMK_DEPEND_LIB just specifies the
+#           dynamic libraries to link;
+#           If not defined GCMK_DEPEND_LIBA, the GCMK_DEPEND_LIB can be both of
+#           the static libraries and dynamic libraries, and will search dynamic
+#           libraries before static libraries.
+#
+#*******************************************************************************#
+
+GCMK_Include    := -I. -I./include -I$(GCMK_HOME)/include -I$(GCMK_HOME)/GC/include -I$(GCMK_HOME)/GC/Include
+GCMK_Include    += $(patsubst %,-I%,$(GCMK_INCLUDE))
+
+GCMK_Depend_Dir := -L$(GCMK_STD_BIN_DIR) -L$(GCMK_STD_BIN_DIR)/$(GCMK_Arch)
+GCMK_Depend_Dir += -L$(GCMK_STD_LIB_DIR) -L$(GCMK_STD_LIB_DIR)/$(GCMK_Arch)
+GCMK_Depend_Dir += $(patsubst %,-L%,$(GCMK_DEPEND_DIR))
+GCMK_Depend_Dir += $(patsubst %,-L%/$(GCMK_Arch),$(GCMK_DEPEND_DIR))
+
+GCMK_Depend_Lib :=
+ifdef GCMK_DEPEND_LIBA
+GCMK_Depend_Lib += -Wl,-Bstatic
+GCMK_Depend_Lib += $(patsubst %,-l%,$(GCMK_DEPEND_LIBA))
+GCMK_Depend_Lib += -Wl,-Bdynamic
+endif
+GCMK_Depend_Lib += $(patsubst %,-l%,$(GCMK_DEPEND_LIB))
+
+ifeq ($(GCMK_ENABLE_ARCHIVE_GROUP), yes)
+    GCMK_Depend  = -Wl,--start-group $(GCMK_Depend_Lib) -Wl,--end-group
+else
+    GCMK_Depend  = $(GCMK_Depend_Lib)
+endif
+
+GCMK_Macro       = $(patsubst %,-D%,$(GCMK_MACRO))
+GCMK_Macro      += $(patsubst %,-D%,$(GCMK_MACRO_EX))
+
+#*******************************************************************************#
+#
+#   $(subst <from>,<to>,<string>)
+#       Name    : subst -- String Replace Function.
+#       Function: Replace all <from> to <to> in the <string>.
+#       Return  : The new string after replace.
+#
+#   $(patsubst <pattern>,<to>,<string>)
+#       Name    : patsubst -- Pattern String Replace Function.
+#       Function: Finds 'whitespace-separated' words in <string> that match <pattern>
+#                 and replaces them with <to>. Here pattern may contain a '%' which
+#                 acts as a wildcard, matching any number of any characters within
+#                 a word.
+#       Return  : The new string after replace.
+#
+#   $(wildcard <pattern-string>)
+#       Name    : wildcard -- Extend the Pattern-String Function.
+#       Function: Extend the Pattern-String.
+#       Return  : The new string after extend
+#
+#   See : http://ftp.gnu.org/old-gnu/Manuals/make-3.79.1/html_chapter/make_8.html
+#
+#*******************************************************************************#
+
+#*******************************************************************************#
+#
+#   VPATH:
+#      The value of the make variable VPATH specifies a list of directories that
+#      make should search. Most often, the directories are expected to contain
+#      prerequisite files that are not in the current directory; however, make
+#      uses VPATH as a search list for both prerequisites and targets of rules.
+#
+#   VPATH Format: Dir1:Dir2:Dir3
+#   So we replace ' ' in [GCMK_SRC_DIR] to ':' , and we also add current dir '.'
+#   The last ':' is make sure GCMK_SRC_FILE1 replace success.
+#
+#   Old GCMK_SRC_DIR is separated by ';' but now separated by ' '.
+#   Old: VPATH = $(subst ;,:,$(GCMK_SRC_DIR)):.:
+#
+#   We want pass space ' ' as the first parameter, so we must make a "space".
+#
+#*******************************************************************************#
+
+EMPTY =
+SPACE = $(EMPTY) $(EMPTY)
+VPATH = $(subst $(SPACE),:,$(GCMK_SRC_DIR)):.:
+
+#*******************************************************************************#
+#
+#   The [GCMK_Object] extend method2 (step by step). It is same as we used below.
+#
+#     GCMK_SRC_FILE1  = $(subst :,/*.cpp ,$(VPATH))
+#     GCMK_SRC_FILE2  = $(wildcard $(GCMK_SRC_FILE1))
+#     GCMK_SRC_FILE   = $(notdir $(GCMK_SRC_FILE2))
+#     GCMK_Object     = $(patsubst %.cpp,%.o,$(GCMK_SRC_FILE))
+#
+#*******************************************************************************#
+
+GCMK_Object = $(patsubst %.cpp,%.o,$(notdir $(wildcard $(subst :,/*.cpp ,$(VPATH))))) $(patsubst %.c,%.o,$(notdir $(wildcard $(subst :,/*.c ,$(VPATH)))))
+
+#*******************************************************************************#
+#
+#   Build option -- Compile and Link options.
+#
+#*******************************************************************************#
+
+GCMK_Option_Compile :=
+GCMK_Option_Link    :=
+
+#*******************************************************************************#
+#
+#   Option -- System Architecture.
+#
+#*******************************************************************************#
+
+ifneq ($(GCMK_Arch), $(GCMK_ArchDefault))
+    ifeq ($(GCMK_Arch), x64)
+        GCMK_Option_Compile += -m64
+        GCMK_Option_Link    += -m64
+    else ifeq ($(GCMK_Arch), x86)
+        GCMK_Option_Compile += -m32
+        GCMK_Option_Link    += -m32
+    else
+        GCMK_Option_Compile += -$(GCMK_Arch)
+        GCMK_Option_Link    += -$(GCMK_Arch)
+    endif
+endif
+
+ifeq ($(shell uname -s), AIX)
+    GCMK_Option_Link += -Wl,-brtl
+endif
+
+#*******************************************************************************#
+#
+#   Option -- System word size.
+#
+#*******************************************************************************#
+
+ifeq ($(GCMK_Arch), x64)
+    GCMK_WORDSIZE = 64
+else ifeq ($(GCMK_Arch), x86)
+    GCMK_WORDSIZE = 32
+else ifeq ($(shell echo $(GCMK_Arch) | grep -o 64), 64)
+    GCMK_WORDSIZE = 64
+else
+    GCMK_WORDSIZE = 32
+endif
+
+# ifndef GCMK_WORDSIZE
+#     GCMK_WORDSIZE = $(shell getconf LONG_BIT)
+# endif
+
+ifeq ($(GCMK_WORDSIZE), 64)
+    GCMK_Option_Compile += -D_GCM_W64 -DGC_WORDSIZE=64 -D_GCM_X64 -D__WORDSIZE=64
+endif
+
+#*******************************************************************************#
+#
+#   Option -- Build Release or Debug version.
+#
+#*******************************************************************************#
+
+ifeq ($(GCMK_DEBUG), yes)
+    GCMK_Option_Compile += -g -D_DEBUG
+    GCMK_Option_Link    += -g
+endif
+
+#*******************************************************************************#
+#
+#   Option -- User defined Macro and Options.
+#
+#*******************************************************************************#
+
+GCMK_Option_Compile += $(GCMK_OPTION_COMPILE) $(GCMK_Macro)
+GCMK_Option_Link    += $(GCMK_OPTION_LINK)
+
+#*******************************************************************************#
+#
+#   Option -- Include.
+#
+#*******************************************************************************#
+
+GCMK_Option_Compile += $(GCMK_Include)
+
+#*******************************************************************************#
+#
+#   Option -- Run-Time path.
+#   'ld' option of '-Wl,-rpath', see 'man ld' and 'man 8 ld.so'.
+#
+#   Rpath token expansion:
+#       $ORIGIN
+#           This expands to the directory containing the program or shared object.
+#       $LIB
+#           This expands to lib or lib64 depending on the architecture.
+#       $PLATFORM
+#           This expands to a string corresponding to the processor type of the
+#           host system (e.g., "x86_64").
+#
+#   (See: 'man 8 ld.so')
+#
+#*******************************************************************************#
+
+ifdef GCMK_RUNPATH
+    GCMK_RUNTIME_PATH       := $(GCMK_RUNPATH)
+    GCMK_RUNTIME_PATH_MODE  := RUNPATH
+else ifdef GCMK_RPATH
+    GCMK_RUNTIME_PATH       := $(GCMK_RPATH)
+    GCMK_RUNTIME_PATH_MODE  := RPATH
+endif
+
+ifdef GCMK_RUNTIME_PATH
+    GCMK_RUNTIME_PATH       := $(subst $(SPACE),:,$(GCMK_RUNTIME_PATH))
+    GCMK_RUNTIME_PATH       := $(subst ',,$(GCMK_RUNTIME_PATH))
+    GCMK_RUNTIME_PATH       := $(subst ",,$(GCMK_RUNTIME_PATH))
+    GCMK_RUNTIME_PATH       := ':$(subst :,::,$(GCMK_RUNTIME_PATH))::'
+    GCMK_RUNTIME_PATH       := $(subst :.,$$ORIGIN/.,$(GCMK_RUNTIME_PATH))
+    GCMK_RUNTIME_PATH       := $(subst /.:,:,$(GCMK_RUNTIME_PATH))
+    GCMK_RUNTIME_PATH       := $(subst /./,/,$(GCMK_RUNTIME_PATH))
+    GCMK_RUNTIME_PATH       := $(subst ::,,$(GCMK_RUNTIME_PATH))
+endif
+
+ifdef GCMK_RUNTIME_PATH
+    ifdef GCMK_RUNPATH
+        GCMK_Option_Link    += -Wl,-rpath=$(GCMK_RUNTIME_PATH),--enable-new-dtags
+    else
+        GCMK_Option_Link    += -Wl,-rpath=$(GCMK_RUNTIME_PATH)
+    endif
+endif
+
+#*******************************************************************************#
+#
+#   Option -- Depend LIB and the LIB's DIR.
+#
+#   'ld' command-line options position(see 'man ld'):
+#       Some of the command-line options to ld may be specified at any point in
+#       the command line. However, options which refer to files, such as -l or -T,
+#       cause the file to be read at the point at which the option appears in the
+#       command line, relative to the object files and other file options.
+#
+#   So, add all -l options and/or -L(-L can also before -o) after -o option.
+#
+#*******************************************************************************#
+
+GCMK_Option_Link   += $(GCMK_Depend_Dir)
+
+#*******************************************************************************#
+#
+#   Build cmd -- Compile and Link.
+#
+#   Note:
+#       'ld' option of '-Wl,-Bsymbolic', see 'man ld'.
+#
+#*******************************************************************************#
+
+GCMK_Compile    = $(GCMK_Compiler)  -c -Wall -fPIC -fvisibility=hidden -D_REENTRANT $(GCMK_Option_Compile)
+GCMK_CompileC   = $(GCMK_CompilerC) -c -Wall -fPIC -D_REENTRANT $(GCMK_Option_Compile)
+
+GCMK_Link_A     = $(GCMK_LinkerA)
+GCMK_Link_SO    = $(GCMK_Linker) -fPIC -shared -s -Wl,-Bsymbolic $(GCMK_Option_Link) -o
+GCMK_Link_Exec  = $(GCMK_Linker) $(GCMK_Option_Link) -o
+
+ifeq ($(GCMK_TARGET_TYPE), LIBA)
+    GCMK_Depend =
+    GCMK_Link   = $(GCMK_Link_A)
+    GCMK_TARGET = $(patsubst %,lib%.a,$(GCMK_TARGET_FILE))
+endif
+
+ifeq ($(GCMK_TARGET_TYPE), LIBSO)
+    GCMK_Link   = $(GCMK_Link_SO)
+    GCMK_TARGET = $(patsubst %,lib%.so,$(GCMK_TARGET_FILE))
+endif
+
+ifeq ($(GCMK_TARGET_TYPE), EXEC)
+    GCMK_Link   = $(GCMK_Link_Exec)
+    GCMK_TARGET = $(GCMK_TARGET_FILE)
+endif
+
+#*******************************************************************************#
+#
+#   Make rules -- The default make rule.
+#
+#*******************************************************************************#
+
+$(GCMK_TARGET) : $(GCMK_Object)
+	$(GCMK_Link) $@ $(GCMK_Object) $(GCMK_Depend)
+
+.SUFFIXES: .c
+.SUFFIXES: .cpp
+.SUFFIXES: .cc
+.SUFFIXES: .C
+.SUFFIXES: .o
+#.SUFFIXES: .h
+
+.c.o:
+	$(GCMK_CompileC) $<
+
+.cpp.o:
+	$(GCMK_Compile) $<
+
+.cc.o:
+	$(GCMK_Compile) $<
+
+.C.o:
+	$(GCMK_Compile) $<
+
+#*******************************************************************************#
+#
+#   Make -- Help and show config.
+#
+#*******************************************************************************#
+
+start :
+	@$(GCMK_Make) all
+
+help :
+	@echo ""
+	@echo " USAGE:"
+	@echo "     make [set [CONFs] [options]|reset|unset] [help|all|config|clean|cleanobj|touch|install]"
+	@echo ""
+	@echo " SET CONFs:"
+	@echo "     home=path     : set make home path."
+	@echo "     platform=arch : set platform, the 'arch' can be x86 x64 x86_64 mips mips64 ..."
+	@echo "     rpath=path    : set the runtime library search path."
+	@echo "     runpath=path  : set the runtime library search path, and set '--enable-new-dtags' to"
+	@echo "                     create the new dynamic tags."
+	@echo "                     note:"
+	@echo "                       * 'rpath' and 'runpath' can specify one or more paths, the path's"
+	@echo "                          format:"
+	@echo "                              path1:path2:path3 ..."
+	@echo "                             'path1 path2 path3 ...'"
+	@echo '                             "path1 path2 path3 ..."'
+	@echo "                       * if the path is begining with '.' or '..', it will be converted to"
+	@echo '                         the token `$$ORIGIN` or `$$ORIGIN/..`.'
+	@echo "                       * recommend to use 'runpath'."
+	@echo "                       * more information, see: 'man 8 ld.so'."
+	@echo ""
+	@echo " SET OPTIONs:"
+	@echo "     static  : set LIB to LIBA(static library)."
+	@echo "     debug   : make debug version."
+	@echo "     lean    : define GC_LEAN macro."
+	@echo "     strict  : define GC_STRICT macro."
+	@echo "     argroup : enable archive group."
+	@echo ""
+
+showconfig :
+	@echo ""
+	@echo " Current project: [`pwd`]"
+	@echo " Makefile config:"
+	@echo "    Home Path    : $(GCMK_HOME)"
+	@echo "    Default Arch : $(GCMK_PlatformArchitecture)"
+	@echo "    Target Arch  : $(GCMK_Architecture)"
+	@echo "    Target Path  : $(GCMK_TARGET_DIR)"
+	@echo "    Target Type  : $(GCMK_TARGET_TYPE)"
+	@echo "    Target File  : $(GCMK_TARGET)"
+	@echo "    Make Tool    : $(GCMK_Make)"
+	@echo "    Compiler     : $(GCMK_Compiler)"
+	@echo "    Linker       : $(GCMK_Linker)"
+	@echo "    Word Size    : $(GCMK_WORDSIZE)"
+	@echo "    Source  DIRs : $(GCMK_SRC_DIR)"
+	@echo "    Include DIRs : $(GCMK_Include)"
+	@echo "    Depend  DIRs : $(GCMK_Depend_Dir)"
+	@echo "    Depends      : $(GCMK_Depend)"
+	@echo "    Macros       : $(GCMK_Macro)"
+	@echo "    Debug Mode   : $(GCMK_DEBUG)"
+	@echo "    Runtime Path : $(GCMK_RUNTIME_PATH_MODE) =" $(GCMK_RUNTIME_PATH)
+	@echo ""
+
+#*******************************************************************************#
+ifndef GCMK_MAKEDIR
+#*******************************************************************************#
+#
+#   Make -- Make file.
+#
+#*******************************************************************************#
+
+all : $(GCMK_TARGET)
+
+config : showconfig
+
+clean :
+	rm -f *.o *.scc *.a *.so lib/* bin/* $(GCMK_TARGET) $(GCMK_CONF_FILE) $(GCMK_CLEAN_FILE) install
+
+cleanobj :
+	rm -f *.o *.scc *.a *.so $(GCMK_TARGET) $(GCMK_CLEAN_FILE) install
+
+touch :
+	touch *.h; touch *.c; touch *.cpp
+
+install : all
+	@: ; \
+        if [ ! -d '$(GCMK_TARGET_DIR)' ] ;              \
+        then                                            \
+            mkdir -p $(GCMK_TARGET_DIR) ;               \
+        fi
+
+	@: ; \
+        if [ -n '$(GCMK_TARGET)' ] ;                    \
+        then                                            \
+            cp -rf $(GCMK_TARGET) $(GCMK_TARGET_DIR)/ ; \
+        fi
+
+	@: ; \
+        if [ -r "./etc" ] ;                             \
+        then                                            \
+            cp -rf ./etc/*  $(GCMK_HOME)/etc/ ;         \
+        fi
+
+	@: ; \
+        if [ -r "./include" ] ;                         \
+        then                                            \
+            cp -rf ./include/*  $(GCMK_HOME)/include/ ; \
+        fi
+
+	touch install
+
+#-------------------------------------------------------------------------------#
+# Make -- Make file configure.
+#-------------------------------------------------------------------------------#
+
+define GCMK_CreateConf
+    if [ -f $(GCMK_CONF_FILE) ] ; then                                  \
+        rm $(GCMK_CONF_FILE) -f ;                                       \
+    fi
+    touch $(GCMK_CONF_FILE)
+    if [ -n "$(home)" ] ; then                                          \
+        eval echo "GCMK_HOME    = $(home)"      >> $(GCMK_CONF_FILE) ;  \
+    fi
+    if [ -n "$(platform)" ] ; then                                      \
+        eval echo "GCMK_ARCH    = $(platform)"  >> $(GCMK_CONF_FILE) ;  \
+    fi
+    if [ -n "$(rpath)" ] ; then                                         \
+        eval echo "GCMK_RPATH   = $(rpath)"     >> $(GCMK_CONF_FILE) ;  \
+    fi
+    if [ -n "$(runpath)" ] ; then                                       \
+        eval echo "GCMK_RUNPATH = $(runpath)"   >> $(GCMK_CONF_FILE) ;  \
+    fi
+endef
+
+define GCMK_DeleteConf
+    if [ -f $(GCMK_CONF_FILE) ] ; then          \
+        rm $(GCMK_CONF_FILE) -f ;               \
+    fi
+endef
+
+define GCMK_SetConf
+    if [ -f $(GCMK_CONF_FILE) ] ; then          \
+        eval echo "$1" >> $(GCMK_CONF_FILE) ;   \
+    fi
+endef
+
+set :
+	@$(call GCMK_CreateConf)
+
+reset :
+	@$(call GCMK_DeleteConf)
+
+unset :
+	@$(call GCMK_DeleteConf)
+
+static :
+	@$(call GCMK_SetConf, "GCMK_LIB_MODE = static")
+
+debug :
+	@$(call GCMK_SetConf, "GCMK_DEBUG = yes")
+
+lean :
+	@$(call GCMK_SetConf, "GCMK_MACRO_EX += GC_LEAN")
+
+strict :
+	@$(call GCMK_SetConf, "GCMK_MACRO_EX += GC_STRICT")
+
+argroup :
+	@$(call GCMK_SetConf, "GCMK_ENABLE_ARCHIVE_GROUP = yes")
+
+#*******************************************************************************#
+else
+#*******************************************************************************#
+#
+#   Make -- Make directory.
+#
+#*******************************************************************************#
+
+define GCMK_MakeDir
+    echo ">>>"
+    set -e ;                        \
+    for i in $(GCMK_MAKEDIR) ;      \
+    do                              \
+        cd $$i ;                    \
+        $(GCMK_Make) $1 ;           \
+        cd - ;                      \
+    done
+    echo "<<<"
+endef
+
+define GCMK_MakeDir2
+    echo ">>>"
+    for i in $(GCMK_MAKEDIR) ;      \
+    do                              \
+        cd $$i ;                    \
+        $(GCMK_Make) $1 ;           \
+        if [ "$$?" != "0" ] ; then  \
+            exit 3 ;                \
+        fi ;                        \
+        cd - ;                      \
+    done
+    echo "<<<"
+endef
+
+all :
+	@$(call GCMK_MakeDir, all)
+
+config :
+	@$(call GCMK_MakeDir, config)
+
+clean :
+	@$(call GCMK_MakeDir, clean)
+
+cleanobj :
+	@$(call GCMK_MakeDir, cleanobj)
+
+touch :
+	@$(call GCMK_MakeDir, touch)
+
+install :
+	@$(call GCMK_MakeDir, install)
+
+#-------------------------------------------------------------------------------#
+# Make -- Make directory configure.
+#-------------------------------------------------------------------------------#
+
+set :
+	@$(call GCMK_MakeDir, set)
+
+reset :
+	@$(call GCMK_MakeDir, reset)
+
+unset :
+	@$(call GCMK_MakeDir, unset)
+
+static :
+	@$(call GCMK_MakeDir, static)
+
+debug :
+	@$(call GCMK_MakeDir, debug)
+
+lean :
+	@$(call GCMK_MakeDir, lean)
+
+strict :
+	@$(call GCMK_MakeDir, strict)
+
+argroup :
+	@$(call GCMK_MakeDir, argroup)
+
+#*******************************************************************************#
+endif
+#*******************************************************************************#
+#
+#   Make end.
+#
+#*******************************************************************************#
+
+

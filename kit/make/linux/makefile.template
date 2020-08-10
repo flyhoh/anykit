@@ -1,0 +1,51 @@
+#********************************************************************************#
+#
+#   GC Make User Defines.
+#
+#********************************************************************************#
+
+#
+# Load make config.
+#
+include ../make.cfg
+
+#
+# Pre-Make command.
+#
+GCMK_PRE_COMMAND    =
+
+#
+# Project config ...
+#
+GCMK_SRC_DIR        = DIR1 DIR2 ...
+GCMK_INCLUDE        = DIR1 DIR2 ...
+
+GCMK_MACRO          = MACRO1 MACRO2 ...
+GCMK_OPTION_COMPILE =
+GCMK_OPTION_LINK    =
+
+#
+# GCMK_TARGET_TYPE: One of 'LIB' 'LIBA' 'LIBSO' 'EXEC'.
+#   EXEC  : Executable (ELF).
+#   LIBA  : Static library (.a).
+#   LIBSO : Shared library (.so).
+#   LIB   : Depend on the GCMK_LIB_MODE:
+#           LIB = LIBA    (if GCMK_LIB_MODE = static)
+#           LIB = LIBSO   (otherwise, default)
+#
+GCMK_TARGET_TYPE    = LIB
+GCMK_TARGET_FILE    = GC
+GCMK_TARGET_DIR     = DSTDIR
+
+GCMK_DEPEND_DIR     = DIR1 DIR2 ...
+GCMK_DEPEND_LIB     = dl pthread
+GCMK_DEPEND_LIBA    =
+
+GCMK_RUNTIME_PATH   =
+
+GCMK_CLEAN_FILE     =
+
+#
+# Load make rule.
+#
+include $(GC_HOME)/Build/Linux/Make/make.rule

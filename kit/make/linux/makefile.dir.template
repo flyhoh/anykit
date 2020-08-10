@@ -1,0 +1,19 @@
+#
+# Load make config.
+#
+#include ./make.cfg
+
+#
+# Pre-Make command.
+#
+GCMK_PRE_COMMAND =
+
+#
+# Set Make DIRs.
+#
+GCMK_MAKEDIR = srcdir1 srcdir2 
+
+#
+# Load make rule.
+#
+include $(GC_HOME)/Build/Linux/Make/make.rule
